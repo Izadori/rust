@@ -3,6 +3,7 @@ pub use std::collections::HashMap;
 use std::env;
 use std::fs::File;
 use std::io::{BufRead, BufReader};
+use std::ops::Index;
 
 use glob::glob;
 use regex::Regex;
@@ -37,6 +38,14 @@ impl CommandLine {
         for (opt, params) in &self.params {
             println!("\"{}\": {:?}", opt, params);
         }
+    }
+}
+
+impl Index<&str> for CommandLine {
+    type Output = Vec<String>;
+
+    fn index(&self, key: &str) -> &Self::Output {
+        &self.get(key).unwrap()
     }
 }
 
