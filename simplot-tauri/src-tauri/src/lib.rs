@@ -133,6 +133,30 @@ mod commands {
             .and_then(|p| p.into_path().ok())
             .map(|path| path.to_string_lossy().into_owned()))
     }
+
+    #[tauri::command]
+    pub async fn save_file_dialog(app: AppHandle) -> Result<Option<String>, String> {
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        app.dialog()
+            .file()
+            .set_title("Save Image")
+            .add_filter("PNG Image", &["png"])
+            .add_filter("JPEG Image", &["jpg", "jpeg"])
+            .set_file_name("plot.png")
+            .save_file(move |path| {
+                let _ = tx.send(path);
+            });
+
+        let path = rx.await.map_err(|e| e.to_string())?;
+        Ok(path
+            .and_then(|p| p.into_path().ok())
+            .map(|path| path.to_string_lossy().into_owned()))
+    }
+
+    #[tauri::command]
+    pub fn save_file(path: PathBuf, data: Vec<u8>) -> Result<(), String> {
+        std::fs::write(path, data).map_err(|e| e.to_string())
+    }
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -169,7 +193,9 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             commands::read_data,
             commands::initial_files,
-            commands::open_file_dialog
+            commands::open_file_dialog,
+            commands::save_file_dialog,
+            commands::save_file
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -1,7 +1,7 @@
-import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { forwardRef, memo, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import { FolderOpen, Trash2 } from "lucide-react";
+import { FolderOpen, Trash2, Download } from "lucide-react";
 import "./App.css";
 
 type Point = {
@@ -69,216 +69,236 @@ function boundsEqual(a: AxisBounds, b: AxisBounds) {
   return a.xMin === b.xMin && a.xMax === b.xMax && a.yMin === b.yMin && a.yMax === b.yMax;
 }
 
+export type PlotCanvasHandle = {
+  toDataURL: (type?: string, quality?: number) => string | undefined;
+};
+
 const PlotCanvas = memo(
-  function PlotCanvas({ bounds, series }: { bounds: AxisBounds; series: Series[] }) {
-    const canvasRef = useRef<HTMLCanvasElement | null>(null);
-    const frameRef = useRef<HTMLDivElement | null>(null);
-    const [size, setSize] = useState({ width: 0, height: 0 });
-    const [drawSummary, setDrawSummary] = useState("");
+  forwardRef<PlotCanvasHandle, { bounds: AxisBounds; series: Series[]; showTicks: boolean }>(
+    function PlotCanvas({ bounds, series, showTicks }, ref) {
+      const canvasRef = useRef<HTMLCanvasElement | null>(null);
+      const frameRef = useRef<HTMLDivElement | null>(null);
+      const [size, setSize] = useState({ width: 0, height: 0 });
+      const [drawSummary, setDrawSummary] = useState("");
 
-    useEffect(() => {
-      const frame = frameRef.current;
-      if (!frame) {
-        return;
-      }
+      useImperativeHandle(ref, () => ({
+        toDataURL: (type, quality) => {
+          return canvasRef.current?.toDataURL(type, quality);
+        },
+      }));
 
-      const resize = () => {
-        const rect = frame.getBoundingClientRect();
-        setSize({
-          width: Math.max(0, Math.floor(rect.width)),
-          height: Math.max(0, Math.floor(rect.height)),
-        });
-      };
-
-      resize();
-      const observer = new ResizeObserver(resize);
-      observer.observe(frame);
-      return () => observer.disconnect();
-    }, []);
-
-    useEffect(() => {
-      const canvas = canvasRef.current;
-      const context = canvas?.getContext("2d");
-      if (!canvas || !context || size.width <= 0 || size.height <= 0) {
-        return;
-      }
-
-      const ratio = window.devicePixelRatio || 1;
-      canvas.width = Math.floor(size.width * ratio);
-      canvas.height = Math.floor(size.height * ratio);
-      canvas.style.width = `${size.width}px`;
-      canvas.style.height = `${size.height}px`;
-      context.setTransform(ratio, 0, 0, ratio, 0, 0);
-      context.clearRect(0, 0, size.width, size.height);
-      context.fillStyle = "#ffffff";
-      context.fillRect(0, 0, size.width, size.height);
-
-      if (series.length === 0) {
-        return;
-      }
-
-      let autoXMin = Infinity;
-      let autoXMax = -Infinity;
-      let autoYMin = Infinity;
-      let autoYMax = -Infinity;
-
-      for (const item of series) {
-        for (const point of item.points) {
-          if (!Number.isFinite(point.x) || !Number.isFinite(point.y)) {
-            continue;
-          }
-          autoXMin = Math.min(autoXMin, point.x);
-          autoXMax = Math.max(autoXMax, point.x);
-          autoYMin = Math.min(autoYMin, point.y);
-          autoYMax = Math.max(autoYMax, point.y);
-        }
-      }
-
-      const xMin = parseBound(bounds.xMin) ?? autoXMin;
-      const xMax = parseBound(bounds.xMax) ?? autoXMax;
-      const yMin = parseBound(bounds.yMin) ?? autoYMin;
-      const yMax = parseBound(bounds.yMax) ?? autoYMax;
-
-      // --- デバッグ用追加: 座標範囲の不正チェックと警告出力 ---
-      if (!Number.isFinite(xMin) || !Number.isFinite(xMax) || !Number.isFinite(yMin) || !Number.isFinite(yMax)) {
-        const xMin =
-          bounds.xMin === ""
-            ? autoXMin
-            : Number.isFinite(parseFloat(bounds.xMin))
-              ? parseFloat(bounds.xMin)
-              : undefined;
-        const xMax =
-          bounds.xMax === ""
-            ? autoXMax
-            : Number.isFinite(parseFloat(bounds.xMax))
-              ? parseFloat(bounds.xMax)
-              : undefined;
-        const yMin =
-          bounds.yMin === ""
-            ? autoYMin
-            : Number.isFinite(parseFloat(bounds.yMin))
-              ? parseFloat(bounds.yMin)
-              : undefined;
-        const yMax =
-          bounds.yMax === ""
-            ? autoYMax
-            : Number.isFinite(parseFloat(bounds.yMax))
-              ? parseFloat(bounds.yMax)
-              : undefined;
-
-        // データが何も検出されない場合、または自動計算自体が失敗した場合は描画しない
-        if (!Number.isFinite(xMin) || !Number.isFinite(xMax) || !Number.isFinite(yMin) || !Number.isFinite(yMax)) {
-          // console.warn("PlotCanvas: 描画範囲の座標が不正な値です。現在の値:", { xMin, xMax, yMin, yMax });
+      useEffect(() => {
+        const frame = frameRef.current;
+        if (!frame) {
           return;
         }
-      }
-      const xSpan = xMax === xMin ? 1 : xMax - xMin;
-      const ySpan = yMax === yMin ? 1 : yMax - yMin;
-      const margin = { top: 48, right: 28, bottom: 48, left: 72 };
-      const plotWidth = Math.max(1, size.width - margin.left - margin.right);
-      const plotHeight = Math.max(1, size.height - margin.top - margin.bottom);
-      const toX = (x: number) => margin.left + ((x - xMin) / xSpan) * plotWidth;
-      const toY = (y: number) => margin.top + plotHeight - ((y - yMin) / ySpan) * plotHeight;
 
-      context.save();
-      context.strokeStyle = "#dde3eb";
-      context.fillStyle = "#344054";
-      context.lineWidth = 1;
-      context.font = "12px system-ui, sans-serif";
-      context.textBaseline = "middle";
+        const resize = () => {
+          const rect = frame.getBoundingClientRect();
+          setSize({
+            width: Math.max(0, Math.floor(rect.width)),
+            height: Math.max(0, Math.floor(rect.height)),
+          });
+        };
 
-      for (const tick of makeTicks(xMin, xMax)) {
-        const x = toX(tick);
-        context.beginPath();
-        context.moveTo(x, margin.top);
-        context.lineTo(x, margin.top + plotHeight);
-        context.stroke();
-        context.textAlign = "center";
-        context.fillText(formatTick(tick), x, margin.top + plotHeight + 18);
-      }
+        resize();
+        const observer = new ResizeObserver(resize);
+        observer.observe(frame);
+        return () => observer.disconnect();
+      }, []);
 
-      for (const tick of makeTicks(yMin, yMax)) {
-        const y = toY(tick);
-        context.beginPath();
-        context.moveTo(margin.left, y);
-        context.lineTo(margin.left + plotWidth, y);
-        context.stroke();
-        context.textAlign = "right";
-        context.fillText(formatTick(tick), margin.left - 10, y);
-      }
-
-      context.strokeStyle = "#8b97a8";
-      context.beginPath();
-      context.moveTo(margin.left, margin.top);
-      context.lineTo(margin.left, margin.top + plotHeight);
-      context.lineTo(margin.left + plotWidth, margin.top + plotHeight);
-      context.stroke();
-
-      context.fillStyle = "#344054";
-      context.textAlign = "center";
-      context.fillText("X", margin.left + plotWidth / 2, size.height - 16);
-      context.save();
-      context.translate(18, margin.top + plotHeight / 2);
-      context.rotate(-Math.PI / 2);
-      context.fillText("Y", 0, 0);
-      context.restore();
-
-      context.save();
-      context.beginPath();
-      context.rect(margin.left, margin.top, plotWidth, plotHeight);
-      context.clip();
-      context.lineWidth = 2;
-      context.lineJoin = "round";
-      context.lineCap = "round";
-
-      let drawnSeries = 0;
-      let drawnPoints = 0;
-
-      for (const item of series) {
-        if (item.points.length === 0) {
-          continue;
+      useEffect(() => {
+        const canvas = canvasRef.current;
+        const context = canvas?.getContext("2d");
+        if (!canvas || !context || size.width <= 0 || size.height <= 0) {
+          return;
         }
 
-        context.strokeStyle = item.color;
-        context.beginPath();
-        let started = false;
+        const ratio = window.devicePixelRatio || 1;
+        canvas.width = Math.floor(size.width * ratio);
+        canvas.height = Math.floor(size.height * ratio);
+        canvas.style.width = `${size.width}px`;
+        canvas.style.height = `${size.height}px`;
+        context.setTransform(ratio, 0, 0, ratio, 0, 0);
+        context.clearRect(0, 0, size.width, size.height);
+        context.fillStyle = "#ffffff";
+        context.fillRect(0, 0, size.width, size.height);
 
-        for (let index = 0; index < item.points.length; index += 1) {
-          const point = item.points[index];
-          if (!Number.isFinite(point.x) || !Number.isFinite(point.y)) {
+        if (series.length === 0) {
+          return;
+        }
+
+        let autoXMin = Infinity;
+        let autoXMax = -Infinity;
+        let autoYMin = Infinity;
+        let autoYMax = -Infinity;
+
+        for (const item of series) {
+          for (const point of item.points) {
+            if (!Number.isFinite(point.x) || !Number.isFinite(point.y)) {
+              continue;
+            }
+            autoXMin = Math.min(autoXMin, point.x);
+            autoXMax = Math.max(autoXMax, point.x);
+            autoYMin = Math.min(autoYMin, point.y);
+            autoYMax = Math.max(autoYMax, point.y);
+          }
+        }
+
+        const xMin = parseBound(bounds.xMin) ?? autoXMin;
+        const xMax = parseBound(bounds.xMax) ?? autoXMax;
+        const yMin = parseBound(bounds.yMin) ?? autoYMin;
+        const yMax = parseBound(bounds.yMax) ?? autoYMax;
+
+        const xSpan = xMax === xMin ? 1 : xMax - xMin;
+        const ySpan = yMax === yMin ? 1 : yMax - yMin;
+        const margin = { top: 48, right: 28, bottom: 48, left: 72 };
+        const plotWidth = Math.max(1, size.width - margin.left - margin.right);
+        const plotHeight = Math.max(1, size.height - margin.top - margin.bottom);
+        const toX = (x: number) => margin.left + ((x - xMin) / xSpan) * plotWidth;
+        const toY = (y: number) => margin.top + plotHeight - ((y - yMin) / ySpan) * plotHeight;
+
+        context.save();
+        context.strokeStyle = "#dde3eb";
+        context.fillStyle = "#344054";
+        context.lineWidth = 1;
+        context.font = "12px system-ui, sans-serif";
+        context.textBaseline = "middle";
+
+        // Draw Legend on Canvas
+        let legendX = margin.left + 4;
+        let legendY = 12 + 6;
+        const swatchWidth = 18;
+        const swatchHeight = 3;
+        const legendGap = 14;
+        const textGap = 6;
+
+        for (const item of series) {
+          const textMetrics = context.measureText(item.label);
+          const itemWidth = swatchWidth + textGap + textMetrics.width;
+
+          if (legendX + itemWidth > size.width - margin.right) {
+            legendX = margin.left + 4;
+            legendY += 16;
+          }
+
+          if (legendY > margin.top) break;
+
+          context.fillStyle = item.color;
+          context.beginPath();
+          context.roundRect(legendX, legendY - swatchHeight / 2, swatchWidth, swatchHeight, 999);
+          context.fill();
+
+          context.fillStyle = "#344054";
+          context.textAlign = "left";
+          context.fillText(item.label, legendX + swatchWidth + textGap, legendY);
+
+          legendX += itemWidth + legendGap;
+        }
+
+        context.strokeStyle = "#dde3eb";
+        context.fillStyle = "#344054";
+        context.textAlign = "center";
+
+        for (const tick of makeTicks(xMin, xMax)) {
+          const x = toX(tick);
+          context.beginPath();
+          context.moveTo(x, margin.top);
+          context.lineTo(x, margin.top + plotHeight);
+          context.stroke();
+          if (showTicks) {
+            context.fillText(formatTick(tick), x, margin.top + plotHeight + 18);
+          }
+        }
+
+        for (const tick of makeTicks(yMin, yMax)) {
+          const y = toY(tick);
+          context.beginPath();
+          context.moveTo(margin.left, y);
+          context.lineTo(margin.left + plotWidth, y);
+          context.stroke();
+          if (showTicks) {
+            context.textAlign = "right";
+            context.fillText(formatTick(tick), margin.left - 10, y);
+          }
+        }
+
+        context.strokeStyle = "#8b97a8";
+        context.beginPath();
+        context.moveTo(margin.left, margin.top);
+        context.lineTo(margin.left, margin.top + plotHeight);
+        context.lineTo(margin.left + plotWidth, margin.top + plotHeight);
+        context.stroke();
+
+        context.fillStyle = "#344054";
+        context.textAlign = "center";
+        context.fillText("X", margin.left + plotWidth / 2, size.height - 16);
+        context.save();
+        context.translate(18, margin.top + plotHeight / 2);
+        context.rotate(-Math.PI / 2);
+        context.fillText("Y", 0, 0);
+        context.restore();
+
+        context.save();
+        context.beginPath();
+        context.rect(margin.left, margin.top, plotWidth, plotHeight);
+        context.clip();
+        context.lineWidth = 2;
+        context.lineJoin = "round";
+        context.lineCap = "round";
+
+        let drawnSeries = 0;
+        let drawnPoints = 0;
+
+        for (const item of series) {
+          if (item.points.length === 0) {
             continue;
           }
 
-          const x = toX(point.x);
-          const y = toY(point.y);
-          if (!started) {
-            context.moveTo(x, y);
-            started = true;
-          } else {
-            context.lineTo(x, y);
+          context.strokeStyle = item.color;
+          context.beginPath();
+          let started = false;
+
+          for (let index = 0; index < item.points.length; index += 1) {
+            const point = item.points[index];
+            if (!Number.isFinite(point.x) || !Number.isFinite(point.y)) {
+              continue;
+            }
+
+            const x = toX(point.x);
+            const y = toY(point.y);
+            if (!started) {
+              context.moveTo(x, y);
+              started = true;
+            } else {
+              context.lineTo(x, y);
+            }
+            drawnPoints += 1;
           }
-          drawnPoints += 1;
+
+          if (started) {
+            context.stroke();
+            drawnSeries += 1;
+          }
         }
 
-        if (started) {
-          context.stroke();
-          drawnSeries += 1;
-        }
-      }
+        context.restore();
+        setDrawSummary(`${drawnSeries} lines, ${drawnPoints} points`);
+      }, [bounds, series, size, showTicks]);
 
-      context.restore();
-      setDrawSummary(`${drawnSeries} lines, ${drawnPoints} points`);
-    }, [bounds, series, size]);
-
-    return (
-      <div className="canvas-frame" ref={frameRef}>
-        <canvas className="plot-canvas" ref={canvasRef} />
-        {series.length > 0 && <div className="draw-summary">{drawSummary}</div>}
-        {series.length === 0 && <div className="empty-state">No data loaded</div>}
-      </div>
-    );
-  },
+      return (
+        <div className="canvas-frame" ref={frameRef}>
+          <canvas className="plot-canvas" ref={canvasRef} />
+          {series.length > 0 && <div className="draw-summary">{drawSummary}</div>}
+          {series.length === 0 && <div className="empty-state">No data loaded</div>}
+        </div>
+      );
+    }
+  ),
   (previous, next) => {
+    if (previous.showTicks !== next.showTicks) {
+      return false;
+    }
     if (!boundsEqual(previous.bounds, next.bounds)) {
       return false;
     }
@@ -291,28 +311,12 @@ const PlotCanvas = memo(
         item.id === nextItem.id &&
         item.visible === nextItem.visible &&
         item.color === nextItem.color &&
+        item.label === nextItem.label &&
         item.points === nextItem.points
       );
     });
   },
 );
-
-const ChartLegend = memo(function ChartLegend({ series }: { series: Series[] }) {
-  if (series.length === 0) {
-    return null;
-  }
-
-  return (
-    <div className="chart-legend" aria-label="Legend">
-      {series.map((item) => (
-        <span className="legend-item" key={item.id}>
-          <span className="legend-swatch" style={{ backgroundColor: item.color }} />
-          {item.label}
-        </span>
-      ))}
-    </div>
-  );
-});
 
 function App() {
   const [series, setSeries] = useState<Series[]>([]);
@@ -325,10 +329,11 @@ function App() {
     yMin: "",
     yMax: "",
   });
+  const [showTicks, setShowTicks] = useState(true);
   const [status, setStatus] = useState("Ready. Open a tab-separated data file.");
+  const plotCanvasRef = useRef<PlotCanvasHandle>(null);
 
   const loadFile = useCallback(async (path: string) => {
-    // 同じファイルが既に読み込まれている場合はスキップ
     if (loadedFilesRef.current.includes(path)) {
       setStatus(`${fileName(path)}: already loaded, skipping.`);
       return;
@@ -374,7 +379,6 @@ function App() {
     setStatus("Opening file dialog...");
     try {
       const path: string | null = await invoke("open_file_dialog");
-
       if (path) {
         await loadFile(path);
       } else {
@@ -385,6 +389,36 @@ function App() {
       setStatus(`Error opening file: ${String(error)}`);
     }
   }, [loadFile]);
+
+  const saveImage = useCallback(async () => {
+    if (series.length === 0) return;
+    
+    setStatus("Opening save dialog...");
+    try {
+      const path = await invoke<string | null>("save_file_dialog");
+      if (!path) {
+        setStatus("Save cancelled.");
+        return;
+      }
+
+      const type = path.toLowerCase().endsWith(".jpg") || path.toLowerCase().endsWith(".jpeg") 
+        ? "image/jpeg" 
+        : "image/png";
+      
+      const dataUrl = plotCanvasRef.current?.toDataURL(type, 0.9);
+      if (!dataUrl) throw new Error("Failed to get image data from canvas");
+
+      const response = await fetch(dataUrl);
+      const arrayBuffer = await response.arrayBuffer();
+      const uint8Array = new Uint8Array(arrayBuffer);
+
+      await invoke("save_file", { path, data: Array.from(uint8Array) });
+      setStatus(`Saved graph to ${fileName(path)}`);
+    } catch (error) {
+      console.error("Error saving image:", error);
+      setStatus(`Error saving image: ${String(error)}`);
+    }
+  }, [series.length]);
 
   useEffect(() => {
     invoke<string[]>("initial_files")
@@ -401,10 +435,9 @@ function App() {
     return () => {
       unlisten?.();
     };
-  }, []);
+  }, [loadFile]);
 
   const visibleSeries = useMemo(() => series.filter((item) => item.visible), [series]);
-
   const pointCount = useMemo(
     () => visibleSeries.reduce((count, item) => count + item.points.length, 0),
     [visibleSeries],
@@ -416,6 +449,8 @@ function App() {
 
   function updateLabelDraft(id: string, label: string) {
     setLabelDrafts((current) => ({ ...current, [id]: label }));
+    // Immediately reflect in series label to update Canvas
+    updateSeries(id, { label });
   }
 
   function commitLabel(id: string) {
@@ -438,11 +473,8 @@ function App() {
     setStatus("All data cleared.");
   }, []);
 
-  // --- データ変更時に座標範囲を自動計算して状態に反映するフック ---
   useEffect(() => {
-    if (series.length === 0) {
-      return;
-    }
+    if (series.length === 0) return;
 
     let autoXMin = Infinity;
     let autoXMax = -Infinity;
@@ -450,11 +482,9 @@ function App() {
     let autoYMax = -Infinity;
 
     for (const item of series) {
-      if (!item.visible) continue; // 表示中の系列のみを対象にする場合はこの行を有効化
+      if (!item.visible) continue;
       for (const point of item.points) {
-        if (!Number.isFinite(point.x) || !Number.isFinite(point.y)) {
-          continue;
-        }
+        if (!Number.isFinite(point.x) || !Number.isFinite(point.y)) continue;
         autoXMin = Math.min(autoXMin, point.x);
         autoXMax = Math.max(autoXMax, point.x);
         autoYMin = Math.min(autoYMin, point.y);
@@ -462,7 +492,6 @@ function App() {
       }
     }
 
-    // 有効なデータが検出された場合のみ状態を更新
     if (Number.isFinite(autoXMin) && Number.isFinite(autoXMax)) {
       setBounds((current) => ({
         ...current,
@@ -488,21 +517,26 @@ function App() {
             <h1>simplot</h1>
             <p>{status}</p>
           </div>
-          <button className="open-button" type="button" onClick={openFile}>
-            <FolderOpen size={18} aria-hidden="true" />
-            Open
-          </button>
-          {series.length > 0 && (
-            <button className="clear-button" type="button" onClick={clearData}>
-              <Trash2 size={18} aria-hidden="true" />
-              Clear
+          <div className="button-group">
+            <button className="open-button" type="button" onClick={openFile}>
+              <FolderOpen size={18} aria-hidden="true" />
+              Open
             </button>
-          )}
+            <button className="open-button" type="button" onClick={saveImage} disabled={series.length === 0}>
+              <Download size={18} aria-hidden="true" />
+              Save
+            </button>
+            {series.length > 0 && (
+              <button className="clear-button" type="button" onClick={clearData}>
+                <Trash2 size={18} aria-hidden="true" />
+                Clear
+              </button>
+            )}
+          </div>
         </header>
 
         <div className="chart-frame">
-          <PlotCanvas bounds={bounds} series={visibleSeries} />
-          <ChartLegend series={visibleSeries} />
+          <PlotCanvas ref={plotCanvasRef} bounds={bounds} series={visibleSeries} showTicks={showTicks} />
         </div>
       </section>
 
@@ -547,6 +581,18 @@ function App() {
               />
             </label>
           </div>
+        </section>
+
+        <section className="control-group">
+          <h2>View Options</h2>
+          <label className="checkbox-row">
+            <input
+              type="checkbox"
+              checked={showTicks}
+              onChange={(e) => setShowTicks(e.target.checked)}
+            />
+            Show axis numbers
+          </label>
         </section>
 
         <section className="control-group series-group">
