@@ -371,9 +371,18 @@ function App() {
   }, []);
 
   const openFile = useCallback(async () => {
-    const path = await invoke<string | null>("open_file_dialog");
-    if (path) {
-      await loadFile(path);
+    setStatus("Opening file dialog...");
+    try {
+      const path: string | null = await invoke("open_file_dialog");
+
+      if (path) {
+        await loadFile(path);
+      } else {
+        setStatus("File selection cancelled.");
+      }
+    } catch (error) {
+      console.error("Error opening file:", error);
+      setStatus(`Error opening file: ${String(error)}`);
     }
   }, [loadFile]);
 

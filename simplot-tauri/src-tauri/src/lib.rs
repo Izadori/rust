@@ -118,14 +118,20 @@ mod commands {
     }
 
     #[tauri::command]
-    pub fn open_file_dialog(app: AppHandle) -> Option<String> {
+    pub async fn open_file_dialog(app: AppHandle) -> Result<Option<String>, String> {
+        let (tx, rx) = tokio::sync::oneshot::channel();
         app.dialog()
             .file()
             .set_title("Open Data File")
             .add_filter("Text data", &["txt", "dat", "tsv", "csv"])
-            .blocking_pick_file()
-            .and_then(|path| path.into_path().ok())
-            .map(|path| path.to_string_lossy().into_owned())
+            .pick_file(move |path| {
+                let _ = tx.send(path);
+            });
+
+        let path = rx.await.map_err(|e| e.to_string())?;
+        Ok(path
+            .and_then(|p| p.into_path().ok())
+            .map(|path| path.to_string_lossy().into_owned()))
     }
 }
 
