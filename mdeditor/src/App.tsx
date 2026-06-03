@@ -1,51 +1,61 @@
-import { useState } from "react";
-import reactLogo from "./assets/react.svg";
-import { invoke } from "@tauri-apps/api/core";
-import "./App.css";
+import React, { useState } from 'react';
+import EditorPane from './components/EditorPane';
+import PreviewPane from './components/PreviewPane';
+// ステート管理フックのインポート
+import { useDocumentStore } from '../state/useDocumentStore';
 
-function App() {
-  const [greetMsg, setGreetMsg] = useState("");
-  const [name, setName] = useState("");
+/**
+ * メインアプリケーションコンポーネント。レイアウトと状態ストアを統合する役割を持つ。
+ */
+const App: React.FC = () => {
+  // ストアから現在のドキュメントの状態を取得
+  const { getActiveDocument, saveActiveDocument } = useDocumentStore();
+  const activeDoc = getActiveDocument();
 
-  async function greet() {
-    // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
-    setGreetMsg(await invoke("greet", { name }));
-  }
+  // 仮想的なハンドルイベント：このハンドラ内でストアの更新と永続化ロジックを制御する。
+  const handleSave = async () => {
+    if (!activeDoc) return alert("保存するドキュメントがありません。");
+    
+    console.log("--- [Saving Document] ---");
+    const success = await saveActiveDocument();
+
+    if (success) {
+      alert("ファイルを正常に保存しました！(Mock)");
+    } else {
+      alert("ファイルの保存中にエラーが発生しました。(Mock)");
+    }
+  };
+
+  // TODO: 実際のアプリケーションでは、このコンポーネントのライフサイクル（unmount時）で未保存変更がないかチェックし、強制終了を防ぐ必要があります。
 
   return (
-    <main className="container">
-      <h1>Welcome to Tauri + React</h1>
+    <div className="mdeditor-container">
+      {/* メニューバー（ファイル操作など） */}
+      <header className="menu-bar">
+        <h1>mdeditor</h1>
+        <div>
+          <button onClick={() => alert('Open File Dialog triggered.')}>開く</button>
+          <button onClick={handleSave} disabled={!activeDoc?.isDirty}>保存</button>
+        </div>
+      </header>
 
-      <div className="row">
-        <a href="https://vite.dev" target="_blank">
-          <img src="/vite.svg" className="logo vite" alt="Vite logo" />
-        </a>
-        <a href="https://tauri.app" target="_blank">
-          <img src="/tauri.svg" className="logo tauri" alt="Tauri logo" />
-        </a>
-        <a href="https://react.dev" target="_blank">
-          <img src={reactLogo} className="logo react" alt="React logo" />
-        </a>
-      </div>
-      <p>Click on the Tauri, Vite, and React logos to learn more.</p>
-
-      <form
-        className="row"
-        onSubmit={(e) => {
-          e.preventDefault();
-          greet();
-        }}
-      >
-        <input
-          id="greet-input"
-          onChange={(e) => setName(e.currentTarget.value)}
-          placeholder="Enter a name..."
+      {/* 二分割レイアウト */}
+      <div className="editor-content">
+        {/* 左ペイン: エディタ */}
+        <EditorPane 
+          document={activeDoc} 
+          onContentChange={(newContent) => {
+            // Storeの更新をトリガーし、Dirtyフラグを立てる
+            // NOTE: ここでストアの updateDocumentContent を呼び出す必要があります。
+            console.log("--- [Input Triggered] Content Change ---");
+          }}
         />
-        <button type="submit">Greet</button>
-      </form>
-      <p>{greetMsg}</p>
-    </main>
+
+        {/* 右ペイン: プレビュー */}
+        <PreviewPane document={activeDoc} />
+      </div>
+    </div>
   );
-}
+};
 
 export default App;
