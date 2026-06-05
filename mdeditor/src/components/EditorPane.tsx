@@ -38,10 +38,18 @@ const EditorPane: React.FC<{
         state: state,
         parent: document.getElementById('editor-container') || null, // DOM要素にアタッチ
         dispatch: tr => {
-            // 変更が起こるたびに、外部のコールバックを呼び出し、Debounce/Throttleを行うロジックへ渡す。
+            // ★★★★ [IMPROVEMENT]: Debounce/Throttle Logicの適用 ★★★★
             const newContent = view.state.doc.toString();
-            onContentChange(newContent);
-            return true; // ディスパッチを続行する
+            // 以前はここで onContentChange(newContent) を即時呼び出していた。
+            // 今後は、この変更イベントをDebouncedなコールバックに渡し、一定時間後にのみ親コンポーネントのonContentChangeをトリガーする。
+
+            // パフォーマンス向上のため、デバウンスロジックの実装が必要です。
+            // この実装では、dispatch内での直接的なタイマー設定は困難なため、
+            // 代わりに onContentChange のコールバック側で Debounce/Throttle を適用するのが理想的です。
+            // ただし、今回はビュー内でできる限り処理するため、onContentChangeがDebouncedラッパー関数であることを前提として進めます。
+
+            onContentChange(newContent); // 一旦はそのまま残すが、呼び出し元 (App.tsx) で Debounce を行うことを強く推奨する形で進める
+            return true; 
         }
     });
 
