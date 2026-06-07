@@ -2,7 +2,7 @@ import React, { useCallback, useState, useEffect } from 'react';
 import EditorPane from './components/EditorPane';
 import PreviewPane from './components/PreviewPane';
 // ステート管理フックのインポート
-import { useDocumentStore } from '../state/useDocumentStore';
+import { useDocumentStore } from './state/useDocumentStore';
 
 /** ユーティリティ関数：Debounceの実装 */
 function useDebounceCallback<T>(callback: (content: string) => void, delayMs: number): React.useCallback<(...args: any[]) => void, [typeof callback, number]> {
