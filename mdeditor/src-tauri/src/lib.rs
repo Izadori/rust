@@ -41,8 +41,27 @@ fn main() {
     tauri::Builder::default()
         .setup(|app| {
             let app_handle = app.handle();
-            // イベントハンドラの設定 (実際のアプリケーションではここにイベントリスナーを登録する)
-            println!("✅ Tauri Application Setup Complete. Listening for frontend events...");
+            // イベントハンドラの設定：フロントエンドから'markdown_content_changed'イベントが送られてくるのを待つ
+            app.manage(tauri::AppHandle::get_window(&app).unwrap()); // ウィンドウハンドルを取得し、状態管理に利用可能にするなど（必要に応じて）
+            let app_handle = app.handle();
+            // ★★★ イベントリスナーの登録 ★★★
+            app.listen("markdown_content_changed", move |event| {
+                if let Some(window) = event.window() {
+                    // イベントペイロードからコンテンツを取得し、コマンドとして処理する。
+                    let content: String = event.payload().unwrap_or(&String::from("")).to_string();
+                    println!("🔥 [Backend Listener] 'markdown_content_changed' イベントを受信しました。内容の長さ: {}文字", content.len());
+                    // バックエンド側のレンダリング処理を実行し、結果をイベントで返す
+                    if let Ok(html) = update_preview(&app_handle, content) {
+                        println!("✅ [Backend Listener] プレビューHTMLを生成しました。");
+                        // プレビュー結果（HTML）をクライアントに送信する新しいカスタムイベントを定義
+                        window.emit("preview_updated", html).unwrap();
+                    } else {
+                        eprintln!("❌ バックエンド処理中にエラーが発生しました。");
+                    }
+                }
+            });
+
+            println!("✅ Tauri Application Setup Complete. Event Listener 'markdown_content_changed' を待機しています...");
             Ok(())
         })
         .invoke_handler(tauri::generate_handler!(update_preview))
